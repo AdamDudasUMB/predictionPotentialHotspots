@@ -1,0 +1,110 @@
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import networkx as nx
+
+#INPUT PARAMETERS:
+df = pd.read_csv('masterGraph.csv', sep = ";")  #INPUT DATA FILE
+cortype = 'spearman' #METHOD OF CORRELATION MEASURED ON THE INPUT DATA -> pearson | spearman | kendall
+n_o_c = 3 #NUMBER OF COMPONENTS = NUMBER OF HOTSPOTS FOR IDENTIFICATION
+
+#CORRELATION MATRIX PRUNING:
+df = df.corr(method = cortype)
+correlation_matrix = df.round(3)
+
+#HEATMAP OF CORRELATION MATRIX
+plt.figure(figsize=(10, 8))
+
+sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+
+plt.tight_layout()
+plt.savefig(f'heatmap_{cortype}.png', dpi=600)
+plt.close() 
+print("Basic heatmap generated")
+
+phi = correlation_matrix.abs().sum(axis=1) - 1
+phi_sorted = phi.sort_values(ascending=False)
+
+sigma = correlation_matrix.abs().quantile(0.75, axis=1) - (1/correlation_matrix.shape[1])
+
+names_to_keep = phi_sorted.index[:n_o_c]
+
+transformed_matrix = pd.DataFrame(0, index=correlation_matrix.index, columns=correlation_matrix.columns)
+
+for name in names_to_keep:
+    if name in correlation_matrix.index:
+        transformed_matrix.loc[name] = correlation_matrix.loc[name]
+
+for row in transformed_matrix.index:
+    
+    transformed_matrix.loc[row] = transformed_matrix.loc[row].abs().ge(sigma.loc[row]) * transformed_matrix.loc[row]
+
+non_zero_rows = transformed_matrix.any(axis=1)
+non_zero_columns = transformed_matrix.any(axis=0)
+
+transformed_matrix_filtered = transformed_matrix.loc[non_zero_rows, non_zero_columns]
+
+#HEATMAP OF PRUNED CORRELATION MATRIX
+plt.figure(figsize=(10, 6))
+
+sns.heatmap(transformed_matrix_filtered, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+
+plt.tight_layout()
+plt.savefig(f'pruned_heatmap_{cortype}.png', dpi=600)
+plt.close() 
+print("Pruned heatmap generated")
+
+#DECONSTRUCTION OF PRUNED HEATMAP TO INDIVIDUAL ROWS
+
+small_dfs = []
+
+for idx, row in transformed_matrix_filtered.iterrows():
+    
+    new_df = row[row != 0].to_frame().T
+     
+    small_dfs.append(new_df)
+
+#HOTSPOT GRAPH SETUP:
+
+i = 1
+
+for df in small_dfs:
+    
+    properties = df.columns.tolist()
+    row_name = df.index.tolist()  
+  
+    G = nx.Graph()
+        
+    G.add_nodes_from(properties)
+
+    for j in range(len(properties)):
+        if  properties[j] != row_name[0]:
+            weight = df.iloc[:, j].tolist()
+                    
+            if weight != 0:
+                G.add_edge(properties[properties.index(row_name[0])], properties[j], weight=weight)
+       
+    connected_nodes = [node for node, degree in dict(G.degree()).items() if degree > 0]
+    subgraph = G.subgraph(connected_nodes)
+        
+    pos = nx.circular_layout(subgraph)
+    labels = nx.get_edge_attributes(subgraph, 'weight')
+        
+    for node in subgraph.nodes():
+         x, y = pos[node]
+         plt.text(x, y, node, fontsize=12, ha='center', va='center', bbox=dict(boxstyle='square', facecolor='white', edgecolor='black'))
+
+    
+    nx.draw_networkx_edges(subgraph, pos)
+    edge_labels = {(u, v): d['weight'] for u, v, d in subgraph.edges(data=True)}
+    nx.draw_networkx_edge_labels(subgraph, pos, edge_labels=edge_labels, font_size=10)
+           
+    plt.axis('off')
+    plt.savefig(f'hotspot_{i}_{cortype}.png', dpi=600)
+    plt.close()
+    
+    print(f'Hotspot graph number {i} generated')
+
+    i += i
+    
